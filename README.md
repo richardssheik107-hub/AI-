@@ -1,3 +1,161 @@
+# 基于火山引擎 RTC 与 RAG 的实时语音智能客服系统
+
+这是一个面向课程咨询场景的实时语音智能客服项目，基于开源 Demo `ark_aigc_demo` 二次开发。项目完成了从用户语音输入、RTC 实时传输、ASR 识别、CustomLLM 回调、自定义 RAG 检索、豆包大模型生成，到 TTS 语音播报的完整闭环。
+
+项目目标是把一个官方 AIGC Demo 改造成可用于实习简历展示的工程项目：不仅能跑通实时语音对话，还能讲清楚 RAG、RTC、ASR/TTS、回调调试和服务端工程化。
+
+## 项目亮点
+
+- 使用 React + 火山 RTC SDK 实现实时语音通话和字幕展示。
+- 使用 FastAPI 搭建自定义 AI 后端，接收火山 `CustomLLM` 回调。
+- 接入火山知识库，实现课程咨询场景下的 RAG 检索增强。
+- 使用 OpenAI Chat Completions 兼容 SSE 响应，让 RTC 云端可以流式消费 LLM 输出。
+- 通过 NATAPP 将本地 RAG 服务映射到公网，解决云端回调本地服务的调试问题。
+- 支持 `/debug/rag`、`/debug/chat`、`/health` 等调试接口，方便面试演示和链路排障。
+
+## 核心链路
+
+```text
+用户浏览器
+  -> React 前端
+  -> 火山 RTC 房间
+  -> 云端 ASR 语音识别
+  -> CustomLLM 回调公网 URL
+  -> FastAPI RAG 后端
+  -> 火山知识库检索
+  -> 豆包/方舟大模型流式生成
+  -> 云端 TTS 语音合成
+  -> RTC 远端音频流播放
+```
+
+## 目录说明
+
+```text
+ark_aigc_demo/
+├─ src/                 # React 前端，负责进房、麦克风、字幕、通话 UI
+├─ Server/              # Node 版官方基础后端，适合 ArkV3 原始 Demo
+├─ server_python/       # Python 版基础后端示例
+└─ rag_llm_server/      # Python FastAPI RAG 后端，本项目接入 CustomLLM 的重点
+```
+
+## RAG 后端环境变量
+
+复制示例文件并填写真实配置：
+
+```powershell
+cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo\rag_llm_server
+Copy-Item .env.example .env
+```
+
+需要填写的字段见：
+
+```text
+rag_llm_server/.env.example
+```
+
+注意：
+
+- `.env` 存放真实 AK、SK、Token、API Key，不要提交到 GitHub。
+- `SERVER_URL` 只填写公网基础地址，例如 `http://xxx.natappfree.cc`，不要加 `/api/chat_callback`。
+- 使用 NATAPP 免费 HTTP 隧道时，代码会在 `LLMConfig` 中携带 `Feature: "{\"Http\":true}"`。
+
+## 启动步骤
+
+需要同时保持三个窗口运行。
+
+### 1. 启动 RAG 后端
+
+```powershell
+cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo\rag_llm_server
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 0.0.0.0 --port 3001
+```
+
+### 2. 启动 NATAPP
+
+```powershell
+cd C:\Users\Fergeson\Downloads
+.\natapp.exe -authtoken=你的隧道token
+```
+
+确认 NATAPP 显示：
+
+```text
+Forwarding http://xxx.natappfree.cc -> http://127.0.0.1:3001
+```
+
+然后将 `.env` 中的 `SERVER_URL` 改成这个公网地址，并重启 RAG 后端。
+
+### 3. 启动前端
+
+```powershell
+cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo
+npm run dev
+```
+
+浏览器打开：
+
+```text
+http://localhost:3000
+```
+
+## 调试接口
+
+### 健康检查
+
+```text
+GET http://localhost:3001/health
+```
+
+用于检查 AK/SK、Ark、RTC、ASR、TTS、知识库和公网回调地址是否配置齐全。
+
+### 知识库检索
+
+```text
+GET http://localhost:3001/debug/rag?query=课程要学多久
+```
+
+用于确认火山知识库检索是否正常。
+
+### 文本问答调试
+
+```text
+POST http://localhost:3001/debug/chat
+```
+
+请求体示例：
+
+```json
+{
+  "history": [],
+  "question": "课程要学多久？"
+}
+```
+
+### CustomLLM 回调接口
+
+```text
+POST http://localhost:3001/api/chat_callback
+```
+
+火山 RTC 云端会请求该接口。接口返回 `text/event-stream`，并以 `data: [DONE]` 结束。
+
+## 面试讲法
+
+可以用下面这段概括项目：
+
+```text
+我基于火山引擎 RTC 和豆包大模型实现了一个实时语音智能客服系统。前端通过 RTC SDK 采集并发布用户语音，云端 Agent 完成 ASR 识别后，通过 CustomLLM 回调我的 FastAPI RAG 后端。后端检索火山知识库，把检索结果合并进系统提示词，再调用豆包模型流式生成回答，最后由云端 TTS 合成为语音并通过 RTC 播放给用户。
+```
+
+重点可以展开：
+
+- 为什么使用 RTC：低延迟、弱网优化、音频 3A、支持打断。
+- RAG 如何接入：`CustomLLM.Url` 回调到 FastAPI，后端检索知识库后调用 LLM。
+- 如何调试：`/health` 看配置，`/debug/rag` 看检索，NATAPP 暴露公网回调。
+- 遇到的问题：HTTP 回调需要 `Feature: "{\"Http\":true}"`，NATAPP 地址失效会导致云端无法回调。
+
+---
+
 # 交互式AIGC场景 AIGC Demo
 
 此 Demo 为简化版本, 如您有 1.5.x 版本 UI 的诉求, 可切换至 1.5.1 分支。

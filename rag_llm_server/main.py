@@ -35,6 +35,37 @@ app.add_middleware(
 )
 
 
+@app.get("/health")
+async def health_check():
+    """
+    Lightweight configuration health check for local demos and interviews.
+    It does not call paid external APIs; it only verifies that required
+    settings are present and reports the active callback URL.
+    """
+    checks = {
+        "volc_credentials": bool(settings.VOLC_AK and settings.VOLC_SK),
+        "ark": bool(settings.ARK_ENDPOINT_ID and (settings.ARK_API_KEY or (settings.VOLC_AK and settings.VOLC_SK))),
+        "rtc": bool(settings.RTC_APP_ID and (settings.RTC_TOKEN or settings.RTC_APP_KEY)),
+        "voice_chat": bool(settings.AIGC_TASK_ID and settings.AIGC_AGENT_USER_ID),
+        "asr": bool(settings.ASR_APP_ID and settings.ASR_CLUSTER),
+        "tts": bool(settings.TTS_APP_ID and settings.TTS_CLUSTER and settings.TTS_VOICE_TYPE),
+        "server_url": bool(settings.SERVER_URL),
+        "knowledge_base": bool(rag_service.account_id and rag_service.project_name and rag_service.collection_name),
+    }
+    return {
+        "status": "ok" if all(checks.values()) else "missing_config",
+        "checks": checks,
+        "server_url": settings.SERVER_URL,
+        "callback_url": f"{settings.SERVER_URL}/api/chat_callback" if settings.SERVER_URL else None,
+        "room": {
+            "room_id": settings.RTC_ROOM_ID,
+            "user_id": settings.RTC_USER_ID,
+            "agent_user_id": settings.AIGC_AGENT_USER_ID,
+            "task_id": settings.AIGC_TASK_ID,
+        },
+    }
+
+
 # --- 1. 获取场景 (前端展示用) ---
 @app.post("/getScenes")
 async def get_scenes(request: Request):
