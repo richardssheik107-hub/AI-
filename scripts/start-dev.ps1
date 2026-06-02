@@ -43,13 +43,13 @@ if ($NatappToken) {
     Start-Process powershell.exe -WindowStyle Normal -ArgumentList @(
         "-NoExit",
         "-Command",
-        "cd '$(Split-Path $NatappPath)'; '.\$(Split-Path $NatappPath -Leaf)' -authtoken=$NatappToken"
+        "cd '$(Split-Path $NatappPath)'; & '.\$(Split-Path $NatappPath -Leaf)' -authtoken=$NatappToken"
     )
 } else {
     Start-Process powershell.exe -WindowStyle Normal -ArgumentList @(
         "-NoExit",
         "-Command",
-        "cd '$(Split-Path $NatappPath)'; '.\$(Split-Path $NatappPath -Leaf)'"
+        "cd '$(Split-Path $NatappPath)'; & '.\$(Split-Path $NatappPath -Leaf)'"
     )
 }
 
