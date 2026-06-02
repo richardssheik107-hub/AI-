@@ -32,7 +32,7 @@ class RagService:
         """
         # 基础校验
         if not self.ak or not self.sk or not self.account_id:
-            print(f"⚠️ [RagService] 配置缺失: 请检查 VOLC_AK, VOLC_SK, VOLC_ACCOUNT_ID(当前: {self.account_id})")
+            print(f"[RagService] Missing config: check VOLC_AK, VOLC_SK, VOLC_ACCOUNT_ID(current: {self.account_id})")
             return ""
 
         path = "/api/knowledge/collection/search_knowledge"
@@ -95,7 +95,7 @@ class RagService:
 
             # 6. 解析响应内容
             if resp.status_code != 200:
-                print(f"❌ [RagService] 请求失败: {resp.status_code}, {resp.text}")
+                print(f"[RagService] Request failed: {resp.status_code}, {resp.text}")
                 return ""
 
             data = resp.json()
@@ -111,20 +111,20 @@ class RagService:
             
             
             if not contents:
-                print(f"⚠️ [RagService] 未检索到匹配的知识内容")
+                print("[RagService] No matched knowledge content")
                 return ""
 
             # 3. 将多条 content 拼接成一个完整的字符串返回
             # 使用双换行符分隔不同的知识块，方便 LLM 区分
             context_text = "\n\n".join(contents)
             
-            print(f"✅ [RagService] 成功提取 {len(contents)} 条知识内容")
+            print(f"[RagService] Retrieved {len(contents)} knowledge item(s)")
             print(f"【传给LLM的,上下文内容】:\n{context_text}")
             return context_text
 
 
         except Exception as e:
-            print(f"❌ [RagService] 异常: {e}")
+            print(f"[RagService] Exception: {e}")
             return ""
 
 # 实例化单例

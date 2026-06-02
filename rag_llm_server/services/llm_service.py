@@ -7,7 +7,9 @@ class LLMService:
         api_key = settings.ARK_API_KEY 
         self.client = Ark(
             base_url="https://ark.cn-beijing.volces.com/api/v3",    
-            api_key=api_key, 
+            api_key=api_key,
+            ak=settings.VOLC_AK,
+            sk=settings.VOLC_SK,
             timeout=1800, 
 
         )
@@ -63,7 +65,7 @@ class LLMService:
         messages.extend(history_messages)
 
         try:
-            print(f"🚀 发起流式调用 (Endpoint: {settings.ARK_ENDPOINT_ID})")
+            print(f"Start streaming call (Endpoint: {settings.ARK_ENDPOINT_ID})")
             
             stream = self.client.chat.completions.create(
                 model=settings.ARK_ENDPOINT_ID,
@@ -77,7 +79,7 @@ class LLMService:
                 yield chunk
 
         except Exception as e:
-            print(f"❌ LLM 调用失败: {e}")
+            print(f"LLM call failed: {e}")
             yield None
 
 llm_service = LLMService()

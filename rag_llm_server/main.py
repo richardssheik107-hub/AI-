@@ -39,17 +39,20 @@ app.add_middleware(
 @app.post("/getScenes")
 async def get_scenes(request: Request):
     # 生成随机 ID
-    room_id = "ChatRoom01"
-    user_id = "Huoshan01"
+    room_id = settings.RTC_ROOM_ID
+    user_id = settings.RTC_USER_ID
 
-    # 签发 RTC Token
-    token_builder = AccessToken(
-        settings.RTC_APP_ID, settings.RTC_APP_KEY, room_id, user_id
-    )
-    token_builder.add_privilege(PRIVILEGES["PrivSubscribeStream"], 0)
-    token_builder.add_privilege(PRIVILEGES["PrivPublishStream"], 0)
-    token_builder.expire_time(int(time.time()) + 3600 * 24)
-    token = token_builder.serialize()
+    if settings.RTC_TOKEN:
+        token = settings.RTC_TOKEN
+    else:
+        # 签发 RTC Token
+        token_builder = AccessToken(
+            settings.RTC_APP_ID, settings.RTC_APP_KEY, room_id, user_id
+        )
+        token_builder.add_privilege(PRIVILEGES["PrivSubscribeStream"], 0)
+        token_builder.add_privilege(PRIVILEGES["PrivPublishStream"], 0)
+        token_builder.expire_time(int(time.time()) + 3600 * 24)
+        token = token_builder.serialize()
 
     # 构造返回结构
     return {
@@ -61,7 +64,7 @@ async def get_scenes(request: Request):
                         # --- 补全的核心字段 ---
                         "id": "Custom",  # 建议改为 Custom，通常前端会根据这个 ID 做特殊处理
                         "name": "自定义助手",
-                        "botName": "AiAgent",
+                        "botName": settings.AIGC_AGENT_USER_ID,
                         "icon": "https://lf3-rtc-demo.volccdn.com/obj/rtc-aigc-assets/DoubaoAvatar.png",  # 补全图标
                         # --- 功能开关 ---
                         "isInterruptMode": True,  # 是否支持打断
@@ -75,7 +78,7 @@ async def get_scenes(request: Request):
                         "AppId": settings.RTC_APP_ID,
                         "RoomId": room_id,
                         "UserId": user_id,
-                        "Token": "0016933e1446a6de10173e1e306SQByMU4CyGJjaUidbGkKAENoYXRSb29tMDEJAEh1b3NoYW4wMQYAAABInWxpAQBInWxpAgBInWxpAwBInWxpBABInWxpBQBInWxpIADy1t0b88zOs1wU2YBbaU7L81CoTtBiu4Viw2hzb7rR/w==",
+                        "Token": token,
                     },
                     # 这里的配置主要是为了兼容前端透传，实际生效主要看 proxy
                     "VoiceChat": {},
@@ -107,9 +110,9 @@ async def proxy(request: Request):
 
     # --- 开始硬编码数据 ---
     # 注意：这里的 AppId, RoomId, UserId, Token 必须与你提供的 JSON 完全一致
-    target_app_id = "6933e1446a6de10173e1e306"
-    target_room_id = "ChatRoom01"
-    target_user_id = "Huoshan01"
+    target_app_id = settings.RTC_APP_ID
+    target_room_id = settings.RTC_ROOM_ID
+    target_user_id = settings.RTC_USER_ID
 
     request_body = {}
 
@@ -118,11 +121,11 @@ async def proxy(request: Request):
         request_body = {
             "AppId": target_app_id,
             "RoomId": target_room_id,
-            "TaskId": "ChatTask01",
+            "TaskId": settings.AIGC_TASK_ID,
             "AgentConfig": {
                 "TargetUserId": [target_user_id],
-                "WelcomeMessage": "我是懂小智，你的专属课程顾问，有什么问题尽管问我吧，我比懂王更强",
-                "UserId": "AiAgent",
+                "WelcomeMessage": settings.AIGC_WELCOME_MESSAGE,
+                "UserId": settings.AIGC_AGENT_USER_ID,
                 "EnableConversationStateCallback": True, 
             },
             "Config": {
@@ -130,16 +133,16 @@ async def proxy(request: Request):
                     "Provider": "volcano",
                     "ProviderParams": {
                         "Mode": "smallmodel",
-                        "AppId": "7077298582",
-                        "Cluster": "volcengine_streaming_common",
+                        "AppId": settings.ASR_APP_ID,
+                        "Cluster": settings.ASR_CLUSTER,
                     },
                 },
                 "TTSConfig": {
                     "Provider": "volcano",
                     "ProviderParams": {
-                        "app": {"appid": "7077298582", "cluster": "volcano_tts"},
+                        "app": {"appid": settings.TTS_APP_ID, "cluster": settings.TTS_CLUSTER},
                         "audio": {
-                            "voice_type": "BV001_streaming",
+                            "voice_type": settings.TTS_VOICE_TYPE,
                             "speed_ratio": 1,
                             "pitch_ratio": 1,
                             "volume_ratio": 1,
@@ -150,6 +153,7 @@ async def proxy(request: Request):
                     # 先用 Custom 模式测试你的回调地址
                     "Mode": "CustomLLM",
                     "Url": f"{settings.SERVER_URL}/api/chat_callback",
+                    "Feature": "{\"Http\":true}",
                     "Method": "POST",
                     "ApiType": "https"
                     if str(settings.SERVER_URL).startswith("https")
@@ -162,7 +166,7 @@ async def proxy(request: Request):
         request_body = {
             "AppId": target_app_id,
             "RoomId": target_room_id,
-            "TaskId": "ChatTask01",
+            "TaskId": settings.AIGC_TASK_ID,
         }
     else:
         # 其他 Action 直接返回前端传的内容
@@ -218,7 +222,7 @@ async def chat_callback(request: Request):
 
     # 校验逻辑 (保持不变)
     if not messages or messages[-1].get("role") != "user":
-        print("⚠️ 忽略：非用户主动发言")
+        print("Skip non-user message")
         return {"text": ""}
 
     # --- 定义 SSE 生成器 ---
@@ -233,6 +237,11 @@ async def chat_callback(request: Request):
 
         for chunk in stream_iterator:
             if chunk:
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    if not delta.content and getattr(delta, "reasoning_content", None):
+                        delta.content = delta.reasoning_content
+                        delta.reasoning_content = None
                 # Ark SDK 的 chunk 是一个对象 (ChatCompletionChunk)
                 # 我们直接用 model_dump_json() 把它转成 JSON 字符串
                 # 这完全符合 RTC 要求的 OpenAI 兼容格式
@@ -321,7 +330,7 @@ async def debug_chat(request: DebugRequest):
 
         if total_usage:
             print(
-                f"🎫 Token 统计: Total={total_usage.total_tokens} (P:{total_usage.prompt_tokens}, C:{total_usage.completion_tokens})"
+                f"Token usage: Total={total_usage.total_tokens} (P:{total_usage.prompt_tokens}, C:{total_usage.completion_tokens})"
             )
 
         # --- 重点：在流结束后构造并打印 history 结构 ---
@@ -336,7 +345,7 @@ async def debug_chat(request: DebugRequest):
 
         # 打印到控制台，方便你直接复制
         print("\n" + "=" * 50)
-        print("🐞 调试完成！以下是可用于下次请求的 history 结构：")
+        print("Debug done. History for next request:")
         print(json.dumps({"history": new_history}, ensure_ascii=False, indent=2))
         print("=" * 50 + "\n")
 
@@ -357,7 +366,7 @@ async def debug_rag(query: str):
     if not query:
         return {"error": "请提供 query 参数"}
 
-    print(f"🔍 [Debug] 正在检索知识库: {query}")
+    print(f"[Debug] retrieving knowledge base: {query}")
 
     # 调用我们在 rag_service.py 中实现的异步 retrieve 方法
     context = await rag_service.retrieve(query)
@@ -377,7 +386,7 @@ async def debug_rag(query: str):
 if __name__ == "__main__":
     import uvicorn
 
-    print(f"🚀 Server running at {settings.SERVER_URL}")
+    print(f"Server running at {settings.SERVER_URL}")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
