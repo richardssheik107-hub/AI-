@@ -63,7 +63,36 @@ rag_llm_server/.env.example
 
 ## 启动步骤
 
-需要同时保持三个窗口运行。
+推荐使用一键启动脚本，它会自动打开三个 PowerShell 窗口，分别启动 RAG 后端、NATAPP 和前端。
+
+```powershell
+cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo
+.\scripts\start-dev.ps1 -NatappToken 你的隧道token
+```
+
+如果 NATAPP 已经保存过 token，也可以直接运行：
+
+```powershell
+.\scripts\start-dev.ps1
+```
+
+启动后打开：
+
+```text
+http://localhost:3000
+```
+
+NATAPP 请求检查面板：
+
+```text
+http://127.0.0.1:4040
+```
+
+如果 NATAPP 输出了新的公网地址，需要把 `.env` 中的 `SERVER_URL` 改成新地址，并重启 RAG 后端窗口。
+
+### 手动启动
+
+如果不用脚本，则需要同时保持三个窗口运行。
 
 ### 1. 启动 RAG 后端
 
