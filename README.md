@@ -12,6 +12,7 @@
 - 使用 OpenAI Chat Completions 兼容 SSE 响应，让 RTC 云端可以流式消费 LLM 输出。
 - 通过 NATAPP 将本地 RAG 服务映射到公网，解决云端回调本地服务的调试问题。
 - 支持 `/debug/rag`、`/debug/chat`、`/health` 等调试接口，方便面试演示和链路排障。
+- 支持配置知识库检索条数和上下文长度，并在调试接口中返回命中片段、耗时和上下文长度，便于优化 RAG 召回质量。
 
 ## 核心链路
 
@@ -57,6 +58,7 @@ rag_llm_server/.env.example
 
 - `.env` 存放真实 AK、SK、Token、API Key，不要提交到 GitHub。
 - `SERVER_URL` 只填写公网基础地址，例如 `http://xxx.natappfree.cc`，不要加 `/api/chat_callback`。
+- `KB_SEARCH_LIMIT` 用于控制知识库召回条数，`KB_MAX_CONTEXT_CHARS` 用于限制传给 LLM 的知识库上下文长度。
 - 使用 NATAPP 免费 HTTP 隧道时，代码会在 `LLMConfig` 中携带 `Feature: "{\"Http\":true}"`。
 
 ## 启动步骤
@@ -114,7 +116,13 @@ GET http://localhost:3001/health
 GET http://localhost:3001/debug/rag?query=信用卡晚还一天会不会影响征信
 ```
 
-用于确认火山知识库检索是否正常。
+用于确认火山知识库检索是否正常。接口会返回 `items` 命中明细、`used_blocks`、`length` 和 `duration_ms`，方便判断知识库是否命中正确片段。
+
+也可以临时指定检索条数：
+
+```text
+GET http://localhost:3001/debug/rag?query=信用卡晚还一天会不会影响征信&limit=2
+```
 
 ### 文本问答调试
 
@@ -131,6 +139,23 @@ POST http://localhost:3001/debug/chat
 }
 ```
 
+### 完整链路调试
+
+```text
+POST http://localhost:3001/debug/chat/full
+```
+
+用于排查完整 RAG + LLM 链路。接口会返回用户问题、RAG 命中条数、命中片段、上下文长度、RAG 耗时、LLM 首 token 时间、LLM 总耗时和最终回答。
+
+请求体示例：
+
+```json
+{
+  "history": [],
+  "question": "信用卡晚还一天会不会影响征信？"
+}
+```
+
 ### CustomLLM 回调接口
 
 ```text
@@ -138,6 +163,17 @@ POST http://localhost:3001/api/chat_callback
 ```
 
 火山 RTC 云端会请求该接口。接口返回 `text/event-stream`，并以 `data: [DONE]` 结束。
+
+## 排障路径
+
+如果前端显示“AI 准备中”或 AI 无回复，按下面顺序定位：
+
+1. 打开 `http://127.0.0.1:4040`，确认 NATAPP/ngrok 是否收到 `POST /api/chat_callback`。
+2. 检查前端控制台或后端日志，确认 `StartVoiceChat` 是否返回 `ok`。
+3. 访问 `/health`，确认 RTC、ASR、TTS、Ark、知识库和 `SERVER_URL` 配置齐全。
+4. 访问 `/debug/rag?query=你的问题&limit=2`，确认知识库是否命中正确片段。
+5. 调用 `/debug/chat/full`，确认 RAG、LLM、首 token 和总耗时是否正常。
+6. 如果 `/debug/chat/full` 正常但语音无回复，优先检查 RTC 云端是否回调、SSE 是否以 `data: [DONE]` 结束，以及浏览器是否允许音频播放。
 
 ## 面试讲法
 
@@ -151,7 +187,9 @@ POST http://localhost:3001/api/chat_callback
 
 - 为什么使用 RTC：低延迟、弱网优化、音频 3A、支持打断。
 - RAG 如何接入：`CustomLLM.Url` 回调到 FastAPI，后端检索知识库后调用 LLM。
-- 如何调试：`/health` 看配置，`/debug/rag` 看检索，NATAPP 暴露公网回调。
+- 如何调试：`/health` 看配置，`/debug/rag` 看检索命中、上下文长度和耗时，NATAPP 暴露公网回调。
+- 如何排障：`/debug/chat/full` 返回 RAG + LLM 完整链路信息，结合 NATAPP 4040 面板判断火山云端是否打到本地服务。
+- RAG 如何优化：通过 `KB_SEARCH_LIMIT` 控制召回条数，通过 `KB_MAX_CONTEXT_CHARS` 控制传给 LLM 的上下文长度，平衡准确率、延迟和 token 成本。
 - 遇到的问题：HTTP 回调需要 `Feature: "{\"Http\":true}"`，NATAPP 地址失效会导致云端无法回调。
 
 ---

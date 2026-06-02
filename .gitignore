@@ -32,6 +32,7 @@ yarn.lock
 pnpm-lock.yaml
 dist/
 log/
+outputs/
 
 **/__pycache__
 **/.env

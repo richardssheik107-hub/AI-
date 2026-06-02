@@ -63,6 +63,13 @@ async def health_check():
             "agent_user_id": settings.AIGC_AGENT_USER_ID,
             "task_id": settings.AIGC_TASK_ID,
         },
+        "rag": {
+            "project_name": settings.KB_PROJECT_NAME,
+            "collection_name": settings.KB_COLLECTION_NAME,
+            "search_limit": settings.KB_SEARCH_LIMIT,
+            "max_context_chars": settings.KB_MAX_CONTEXT_CHARS,
+            "request_timeout": settings.KB_REQUEST_TIMEOUT,
+        },
     }
 
 
@@ -247,7 +254,7 @@ async def chat_callback(request: Request):
     except:
         return {"text": ""}
 
-    print(f"======================== 流式请求", data)
+    print("[CustomLLM] incoming stream request")
 
     messages = data.get("messages", [])
 
@@ -258,13 +265,26 @@ async def chat_callback(request: Request):
 
     # --- 定义 SSE 生成器 ---
     async def generate_sse():
-        # 1. 调用 LLM 的流式方法
-        # 注意：这里是同步生成器还是异步取决于 SDK，Ark SDK 默认是同步 iterator，
-        # 但在 FastAPI 的 async def 中，通常可以直接遍历
+        request_start = time.time()
+        question = messages[-1].get("content", "")
+        print(f"[CustomLLM] question={question}")
 
-        rag_content = await rag_service.retrieve(messages[-1].get("content", ""))
+        rag_start = time.time()
+        rag_result = await rag_service.search(question)
+        rag_duration_ms = round((time.time() - rag_start) * 1000, 2)
+        rag_content = rag_result.get("context", "")
+        print(
+            "[CustomLLM] rag "
+            f"status={rag_result.get('status')} "
+            f"items={len(rag_result.get('items', []))} "
+            f"used_blocks={rag_result.get('used_blocks', 0)} "
+            f"length={rag_result.get('context_length', 0)} "
+            f"duration_ms={rag_duration_ms}"
+        )
 
         stream_iterator = llm_service.chat_stream(messages, rag_content)
+        first_token_seen = False
+        chunk_count = 0
 
         for chunk in stream_iterator:
             if chunk:
@@ -273,15 +293,22 @@ async def chat_callback(request: Request):
                     if not delta.content and getattr(delta, "reasoning_content", None):
                         delta.content = delta.reasoning_content
                         delta.reasoning_content = None
+                    if delta.content and not first_token_seen:
+                        first_token_seen = True
+                        first_token_ms = round((time.time() - request_start) * 1000, 2)
+                        print(f"[CustomLLM] first_token_ms={first_token_ms}")
                 # Ark SDK 的 chunk 是一个对象 (ChatCompletionChunk)
                 # 我们直接用 model_dump_json() 把它转成 JSON 字符串
                 # 这完全符合 RTC 要求的 OpenAI 兼容格式
                 chunk_json = chunk.model_dump_json()
+                chunk_count += 1
 
                 # 2. 构造 SSE 协议格式： "data: {json数据}\n\n"
                 yield f"data: {chunk_json}\n\n"
 
         # 3. 循环结束后，必须发送结束符 (RTC 要求的)
+        total_ms = round((time.time() - request_start) * 1000, 2)
+        print(f"[CustomLLM] sse_done chunks={chunk_count} total_ms={total_ms}")
         yield "data: [DONE]\n\n"
 
     # --- 返回流式响应 ---
@@ -311,18 +338,20 @@ class DebugRequest(BaseModel):
     question: str
 
 
+def build_debug_messages(request: DebugRequest) -> list:
+    current_messages = []
+    for msg in request.history:
+        current_messages.append({"role": msg.role, "content": msg.content})
+    current_messages.append({"role": "user", "content": request.question})
+    return current_messages
+
+
 # 2. 调试接口
 @app.post("/debug/chat")
 async def debug_chat(request: DebugRequest):
 
 
-    # 构造当前发送给 LLM 的消息列表
-    current_messages = []
-    for msg in request.history:
-        current_messages.append({"role": msg.role, "content": msg.content})
-
-    # 放入用户最新问题
-    current_messages.append({"role": "user", "content": request.question})
+    current_messages = build_debug_messages(request)
 
     async def generate_text():
         full_ai_response = ""
@@ -383,13 +412,83 @@ async def debug_chat(request: DebugRequest):
     return StreamingResponse(generate_text(), media_type="text/plain")
 
 
+@app.post("/debug/chat/full")
+async def debug_chat_full(request: DebugRequest):
+    """
+    完整链路调试接口：返回 RAG 命中、耗时、LLM 首 token 时间、总耗时和最终回答。
+    适合面试演示和排障，不用于 RTC 云端回调。
+    """
+    current_messages = build_debug_messages(request)
+    trace = {
+        "question": request.question,
+        "history_count": len(request.history or []),
+    }
+
+    total_start = time.time()
+    rag_start = time.time()
+    rag_result = await rag_service.search(request.question)
+    rag_duration_ms = round((time.time() - rag_start) * 1000, 2)
+    rag_content = rag_result.get("context", "")
+
+    llm_start = time.time()
+    first_token_ms = None
+    full_ai_response = ""
+    chunk_count = 0
+    total_usage = None
+
+    stream = llm_service.chat_stream(current_messages, rag_content)
+    for chunk in stream:
+        if chunk and chunk.choices:
+            delta = chunk.choices[0].delta
+            if delta.content:
+                if first_token_ms is None:
+                    first_token_ms = round((time.time() - llm_start) * 1000, 2)
+                full_ai_response += delta.content
+                chunk_count += 1
+        if hasattr(chunk, "usage") and chunk.usage:
+            total_usage = chunk.usage
+
+    llm_duration_ms = round((time.time() - llm_start) * 1000, 2)
+    total_duration_ms = round((time.time() - total_start) * 1000, 2)
+    usage_payload = None
+    if total_usage:
+        usage_payload = {
+            "total_tokens": total_usage.total_tokens,
+            "prompt_tokens": total_usage.prompt_tokens,
+            "completion_tokens": total_usage.completion_tokens,
+        }
+
+    trace.update(
+        {
+            "rag": {
+                "status": rag_result.get("status"),
+                "limit": rag_result.get("limit"),
+                "item_count": len(rag_result.get("items", [])),
+                "used_blocks": rag_result.get("used_blocks", 0),
+                "context_length": rag_result.get("context_length", 0),
+                "duration_ms": rag_duration_ms,
+                "items": rag_result.get("items", []),
+            },
+            "llm": {
+                "answer": full_ai_response,
+                "chunk_count": chunk_count,
+                "first_token_ms": first_token_ms,
+                "duration_ms": llm_duration_ms,
+                "usage": usage_payload,
+            },
+            "total_duration_ms": total_duration_ms,
+        }
+    )
+    return trace
+
+
 # ... 其他导入保持不变 ...
 from services.rag_service import rag_service  # 确保已导入 rag_service
 
 
 # --- 新增：知识库调试接口 ---
 @app.get("/debug/rag")
-async def debug_rag(query: str):
+async def debug_rag(query: str, limit: Optional[int] = None):
     """
     调试接口：直接返回知识库检索到的原始文本内容
     用法：浏览器访问 http://127.0.0.1:8000/debug/rag?query=你的问题
@@ -399,14 +498,20 @@ async def debug_rag(query: str):
 
     print(f"[Debug] retrieving knowledge base: {query}")
 
-    # 调用我们在 rag_service.py 中实现的异步 retrieve 方法
-    context = await rag_service.retrieve(query)
+    start_t = time.time()
+    result = await rag_service.search(query, limit=limit)
+    duration = time.time() - start_t
 
     return {
         "query": query,
-        "retrieved_context": context,
-        "length": len(context) if context else 0,
-        "status": "success" if context else "no_results_or_error",
+        "status": result.get("status"),
+        "retrieved_context": result.get("context", ""),
+        "items": result.get("items", []),
+        "limit": result.get("limit"),
+        "used_blocks": result.get("used_blocks", 0),
+        "length": result.get("context_length", 0),
+        "max_context_chars": result.get("max_context_chars"),
+        "duration_ms": round(duration * 1000, 2),
     }
 
 

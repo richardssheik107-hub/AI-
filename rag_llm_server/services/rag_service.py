@@ -1,8 +1,6 @@
-import os
 import httpx
 from config import settings
 from services.utils import Signer
-import json
 
 
 
@@ -13,36 +11,55 @@ class RagService:
         self.sk = settings.VOLC_SK
         
         # 2. 知识库特有配置
-        # 建议后续将这些变量加入 .env 和 config.py 中，这里暂时使用 os.getenv 读取
-        # 如果 .env 中未配置，将使用默认值
-        self.collection_name = os.getenv("KB_COLLECTION_NAME", "dw_ai")  # 知识库集合名称
-        self.project_name = os.getenv("KB_PROJECT_NAME", "default")      # 项目名称
-        self.account_id = os.getenv("VOLC_ACCOUNT_ID", "kb-2580e8a6357082fb")               # 火山引擎主账号ID (必填)
+        self.collection_name = settings.KB_COLLECTION_NAME
+        self.project_name = settings.KB_PROJECT_NAME
+        self.account_id = settings.VOLC_ACCOUNT_ID
+        self.default_limit = max(1, settings.KB_SEARCH_LIMIT)
+        self.max_context_chars = max(500, settings.KB_MAX_CONTEXT_CHARS)
+        self.timeout = max(1.0, settings.KB_REQUEST_TIMEOUT)
         
         # 知识库服务的固定配置
         self.host = "api-knowledgebase.mlp.cn-beijing.volces.com"
         self.region = "cn-north-1" # 示例代码中使用的是 cn-north-1
         self.service = "air"       # 知识库服务的 Service 名通常为 air
 
-    async def retrieve(self, query: str) -> str:
+    async def search(self, query: str, limit: int | None = None) -> dict:
         """
-        根据用户问题检索知识库
+        根据用户问题检索知识库，并返回结构化结果，便于调试命中质量。
         :param query: 用户查询语句
-        :return: 整合后的上下文文本
+        :param limit: 本次检索条数；不传则使用 KB_SEARCH_LIMIT
+        :return: 包含 context、items、status 的结构化结果
         """
+        query = (query or "").strip()
+        if not query:
+            return {
+                "status": "empty_query",
+                "context": "",
+                "items": [],
+                "limit": 0,
+                "context_length": 0,
+            }
+
         # 基础校验
         if not self.ak or not self.sk or not self.account_id:
             print(f"[RagService] Missing config: check VOLC_AK, VOLC_SK, VOLC_ACCOUNT_ID(current: {self.account_id})")
-            return ""
+            return {
+                "status": "missing_config",
+                "context": "",
+                "items": [],
+                "limit": 0,
+                "context_length": 0,
+            }
 
         path = "/api/knowledge/collection/search_knowledge"
+        search_limit = max(1, min(int(limit or self.default_limit), 10))
         
         # 3. 构造请求体 (参考官方示例)
         body = {
             "project": self.project_name,
             "name": self.collection_name,
             "query": query,
-            "limit": 1, # 获取相关度最高的前3条
+            "limit": search_limit,
             "pre_processing": {
                 "need_instruction": True,
                 "return_token_usage": True,
@@ -85,47 +102,95 @@ class RagService:
             url = f"http://{self.host}{path}"
             
             async with httpx.AsyncClient() as client:
-                # request_data['headers'] 已经被 signer 修改，包含了 Authorization 字段
                 resp = await client.post(
                     url, 
                     headers=request_data["headers"], 
                     json=body,
-                    timeout=10.0
+                    timeout=self.timeout
                 )
 
             # 6. 解析响应内容
             if resp.status_code != 200:
                 print(f"[RagService] Request failed: {resp.status_code}, {resp.text}")
-                return ""
+                return {
+                    "status": "request_failed",
+                    "http_status": resp.status_code,
+                    "context": "",
+                    "items": [],
+                    "limit": search_limit,
+                    "context_length": 0,
+                }
 
             data = resp.json()
-            
-            # --- 核心提取逻辑 ---
-            # 1. 按照层级定位到 result_list
-            # 使用 .get() 级联获取，防止中间某个 Key 缺失导致报错
             result_list = data.get("data", {}).get("result_list", [])
-            
-            # 2. 提取所有 item 中的 content
-            # 兼容多条数据：遍历列表，只取 content 字段不为空的部分
-            contents = [item.get("content", "") for item in result_list if item.get("content")]
-            
-            
-            if not contents:
-                print("[RagService] No matched knowledge content")
-                return ""
 
-            # 3. 将多条 content 拼接成一个完整的字符串返回
-            # 使用双换行符分隔不同的知识块，方便 LLM 区分
-            context_text = "\n\n".join(contents)
+            items = []
+            for index, item in enumerate(result_list, start=1):
+                content = (item.get("content") or "").strip()
+                if not content:
+                    continue
+                items.append(
+                    {
+                        "rank": index,
+                        "content": content,
+                        "content_length": len(content),
+                        "score": item.get("score"),
+                        "doc_id": item.get("doc_id") or item.get("id"),
+                        "doc_name": item.get("doc_name") or item.get("title") or item.get("name"),
+                    }
+                )
+
+            if not items:
+                print("[RagService] No matched knowledge content")
+                return {
+                    "status": "no_results",
+                    "context": "",
+                    "items": [],
+                    "limit": search_limit,
+                    "context_length": 0,
+                }
+
+            blocks = []
+            current_length = 0
+            for item in items:
+                block = f"[知识片段 {item['rank']}]\n{item['content']}"
+                if blocks and current_length + len(block) > self.max_context_chars:
+                    break
+                blocks.append(block)
+                current_length += len(block)
+
+            context_text = "\n\n".join(blocks)
             
-            print(f"[RagService] Retrieved {len(contents)} knowledge item(s)")
-            print(f"【传给LLM的,上下文内容】:\n{context_text}")
-            return context_text
+            print(f"[RagService] Retrieved {len(items)} item(s), using {len(blocks)} block(s)")
+            print(f"[RagService] Context length: {len(context_text)} chars")
+            return {
+                "status": "success",
+                "context": context_text,
+                "items": items,
+                "limit": search_limit,
+                "used_blocks": len(blocks),
+                "context_length": len(context_text),
+                "max_context_chars": self.max_context_chars,
+            }
 
 
         except Exception as e:
             print(f"[RagService] Exception: {e}")
-            return ""
+            return {
+                "status": "exception",
+                "error": str(e),
+                "context": "",
+                "items": [],
+                "limit": limit or self.default_limit,
+                "context_length": 0,
+            }
+
+    async def retrieve(self, query: str) -> str:
+        """
+        根据用户问题检索知识库，返回拼接后的上下文文本，供 LLM 语音链路直接使用。
+        """
+        result = await self.search(query)
+        return result.get("context", "")
 
 # 实例化单例
 rag_service = RagService()
