@@ -1,6 +1,6 @@
 # 基于火山引擎 RTC 与 RAG 的实时语音智能客服系统
 
-这是一个面向课程咨询场景的实时语音智能客服项目，基于开源 Demo `ark_aigc_demo` 二次开发。项目完成了从用户语音输入、RTC 实时传输、ASR 识别、CustomLLM 回调、自定义 RAG 检索、豆包大模型生成，到 TTS 语音播报的完整闭环。
+这是一个面向信用卡与消费金融客服场景的实时语音智能客服项目，基于开源 Demo `ark_aigc_demo` 二次开发。项目完成了从用户语音输入、RTC 实时传输、ASR 识别、CustomLLM 回调、自定义 RAG 检索、豆包大模型生成，到 TTS 语音播报的完整闭环。
 
 项目目标是把一个官方 AIGC Demo 改造成可用于实习简历展示的工程项目：不仅能跑通实时语音对话，还能讲清楚 RAG、RTC、ASR/TTS、回调调试和服务端工程化。
 
@@ -8,7 +8,7 @@
 
 - 使用 React + 火山 RTC SDK 实现实时语音通话和字幕展示。
 - 使用 FastAPI 搭建自定义 AI 后端，接收火山 `CustomLLM` 回调。
-- 接入火山知识库，实现课程咨询场景下的 RAG 检索增强。
+- 接入火山知识库，实现信用卡与消费金融场景下的 RAG 检索增强。
 - 使用 OpenAI Chat Completions 兼容 SSE 响应，让 RTC 云端可以流式消费 LLM 输出。
 - 通过 NATAPP 将本地 RAG 服务映射到公网，解决云端回调本地服务的调试问题。
 - 支持 `/debug/rag`、`/debug/chat`、`/health` 等调试接口，方便面试演示和链路排障。
@@ -111,7 +111,7 @@ GET http://localhost:3001/health
 ### 知识库检索
 
 ```text
-GET http://localhost:3001/debug/rag?query=课程要学多久
+GET http://localhost:3001/debug/rag?query=信用卡晚还一天会不会影响征信
 ```
 
 用于确认火山知识库检索是否正常。
@@ -127,7 +127,7 @@ POST http://localhost:3001/debug/chat
 ```json
 {
   "history": [],
-  "question": "课程要学多久？"
+  "question": "信用卡只还最低还款会怎么样？"
 }
 ```
 
@@ -144,7 +144,7 @@ POST http://localhost:3001/api/chat_callback
 可以用下面这段概括项目：
 
 ```text
-我基于火山引擎 RTC 和豆包大模型实现了一个实时语音智能客服系统。前端通过 RTC SDK 采集并发布用户语音，云端 Agent 完成 ASR 识别后，通过 CustomLLM 回调我的 FastAPI RAG 后端。后端检索火山知识库，把检索结果合并进系统提示词，再调用豆包模型流式生成回答，最后由云端 TTS 合成为语音并通过 RTC 播放给用户。
+我基于火山引擎 RTC 和豆包大模型实现了一个面向信用卡与消费金融业务的实时语音智能客服系统。前端通过 RTC SDK 采集并发布用户语音，云端 Agent 完成 ASR 识别后，通过 CustomLLM 回调我的 FastAPI RAG 后端。后端检索火山知识库，把检索结果合并进系统提示词，再调用豆包模型流式生成回答，最后由云端 TTS 合成为语音并通过 RTC 播放给用户。
 ```
 
 重点可以展开：
