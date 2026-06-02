@@ -34,7 +34,7 @@ if (Test-PortListening $RagPort) {
     Start-Process powershell.exe -WindowStyle Normal -ArgumentList @(
         "-NoExit",
         "-Command",
-        "cd '$RagRoot'; '$PythonExe' -m uvicorn main:app --host 0.0.0.0 --port $RagPort"
+        "cd '$RagRoot'; & '$PythonExe' -m uvicorn main:app --host 0.0.0.0 --port $RagPort"
     )
 }
 
