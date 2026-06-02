@@ -29,6 +29,36 @@
   -> RTC 远端音频流播放
 ```
 
+## RTC 语音链路拆解
+
+本项目没有把用户语音通过 WebSocket 或 HTTP 上传到自己的后端，而是使用 RTC 作为实时媒体通道。后端只负责鉴权、启动云端 Agent 和 CustomLLM 回调，音频流本身由火山 RTC 云端处理，降低了本地服务的带宽和转发压力。
+
+### 1. 用户加入 RTC 房间
+
+前端调用 `RtcClient.joinRoom()` 加入房间，核心代码在 `src/lib/RtcClient.ts`。加入房间时配置了 `isAutoSubscribeAudio: true`，因此 AI Agent 后续发布音频流时，浏览器可以自动订阅并播放。
+
+### 2. 麦克风采集与用户音频推流
+
+麦克风采集由 RTC SDK 处理，入口是 `RtcClient.startAudioCapture()`。用户开启麦克风后，前端通过 `RtcClient.publishStream(MediaType.AUDIO)` 将本地音频发布到 RTC 房间，代码调用链主要在 `src/lib/useCommon.ts` 和 `src/lib/RtcClient.ts`。
+
+### 3. ASR 字幕与 AI 回复文本
+
+用户说话后的字幕不是前端本地识别的，而是云端 ASR 识别后通过 RTC 二进制消息回传。前端在 `src/lib/RtcClient.ts` 注册 `onRoomBinaryMessageReceived`，再由 `src/lib/listenerHooks.ts` 的 `handleRoomBinaryMessageReceived` 调用 `src/utils/handler.ts` 解析消息。
+
+`src/utils/handler.ts` 中的 `MESSAGE_TYPE.SUBTITLE = 'subv'` 对应字幕消息，既可能是用户 ASR 文本，也可能是 AI 的 LLM 回复文本。前端通过消息里的 `userId` 区分“我”和“AI”。
+
+### 4. AI 回复语音播放
+
+AI 的文字回复由云端 TTS 合成为音频，AI Agent 像一个远端用户一样在 RTC 房间里发布音频流。前端通过 `onUserPublishStream` 监听到远端音频发布，处理逻辑在 `src/lib/listenerHooks.ts` 的 `handleUserPublishStream`。
+
+如果浏览器阻止自动播放，RTC SDK 会触发 `onAutoplayFailed`，前端可以提示用户点击页面恢复播放。
+
+### 5. 打断与控制指令
+
+项目的打断不是走普通 HTTP 请求，而是通过 RTC 二进制消息发送给云端 Agent。前端 `AudioController` 调用 `RtcClient.commandAgent()`，内部使用 `sendUserBinaryMessage` 发送控制指令，相关代码在 `src/pages/MainPage/MainArea/Room/AudioController.tsx` 和 `src/lib/RtcClient.ts`。
+
+这也是使用 RTC 的核心价值之一：音频流、字幕消息和控制指令都在低延迟实时链路里完成，更适合语音对话里的“边听边说”和“随时打断”。
+
 ## 目录说明
 
 ```text
