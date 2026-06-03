@@ -30,7 +30,7 @@ class Config:
     VOLC_ACCOUNT_ID = os.getenv("VOLC_ACCOUNT_ID")
     KB_PROJECT_NAME = os.getenv("KB_PROJECT_NAME", "default")
     KB_COLLECTION_NAME = os.getenv("KB_COLLECTION_NAME", "dw_ai")
-    KB_SEARCH_LIMIT = int(os.getenv("KB_SEARCH_LIMIT", "3"))
+    KB_SEARCH_LIMIT = int(os.getenv("KB_SEARCH_LIMIT", "1"))
     KB_MAX_CONTEXT_CHARS = int(os.getenv("KB_MAX_CONTEXT_CHARS", "3000"))
     KB_REQUEST_TIMEOUT = float(os.getenv("KB_REQUEST_TIMEOUT", "10"))
 
