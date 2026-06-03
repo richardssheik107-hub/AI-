@@ -215,6 +215,41 @@ POST http://localhost:3001/debug/chat/full
 }
 ```
 
+## 评测集闭环
+
+项目内置了一个金融客服评测集，用来验证 Prompt、RAG 和合规边界是否稳定。题库位置：
+
+```text
+rag_llm_server/evals/eval_cases.json
+```
+
+本地批量评测脚本：
+
+```powershell
+cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo\rag_llm_server
+.\.venv\Scripts\python.exe .\evals\run_eval.py --limit 3
+```
+
+运行全部题目：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_eval.py
+```
+
+只复测某一条：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_eval.py --case-id cc_credit_late_one_day
+```
+
+评测脚本会调用 `/debug/chat/full`，输出每条问题的 RAG 命中条数、上下文长度、首 token 时间、最终回答和规则检查结果。报告会保存到 `outputs/evals/`，该目录不会提交到 GitHub。
+
+评测结果如果失败，需要按下面顺序判断：
+
+1. `rag.item_count` 为 0：优先优化知识库内容、切片或检索关键词。
+2. RAG 命中正常但回答不合规：优先优化 Prompt 或安全规则。
+3. `first_token_ms` 或总耗时过高：调整 `KB_SEARCH_LIMIT` 和 `KB_MAX_CONTEXT_CHARS`。
+
 ### CustomLLM 回调接口
 
 ```text
@@ -249,6 +284,7 @@ POST http://localhost:3001/api/chat_callback
 - 如何调试：`/health` 看配置，`/debug/rag` 看检索命中、上下文长度和耗时，NATAPP 暴露公网回调。
 - 如何排障：`/debug/chat/full` 返回 RAG + LLM 完整链路信息，结合 NATAPP 4040 面板判断火山云端是否打到本地服务。
 - RAG 如何优化：通过 `KB_SEARCH_LIMIT` 控制召回条数，通过 `KB_MAX_CONTEXT_CHARS` 控制传给 LLM 的上下文长度，平衡准确率、延迟和 token 成本。
+- 如何评测：用 `rag_llm_server/evals/run_eval.py` 跑金融客服 Golden Dataset，检查征信、盗刷、投诉、验证码等高风险场景是否合规。
 - 遇到的问题：HTTP 回调需要 `Feature: "{\"Http\":true}"`，NATAPP 地址失效会导致云端无法回调。
 
 ---
