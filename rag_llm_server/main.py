@@ -290,9 +290,6 @@ async def chat_callback(request: Request):
             if chunk:
                 if chunk.choices:
                     delta = chunk.choices[0].delta
-                    if not delta.content and getattr(delta, "reasoning_content", None):
-                        delta.content = delta.reasoning_content
-                        delta.reasoning_content = None
                     if delta.content and not first_token_seen:
                         first_token_seen = True
                         first_token_ms = round((time.time() - request_start) * 1000, 2)
