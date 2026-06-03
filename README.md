@@ -95,6 +95,18 @@ rag_llm_server/.env.example
 
 推荐使用一键启动脚本，它会自动打开三个 PowerShell 窗口，分别启动 RAG 后端、NATAPP 和前端。
 
+### 双击启动
+
+在项目根目录直接双击：
+
+```text
+start-dev.bat
+```
+
+如果 NATAPP 已经保存过 token，弹窗里直接回车即可；如果没有保存，就输入 NATAPP 隧道 token 后回车。
+
+### PowerShell 启动
+
 ```powershell
 cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo
 .\scripts\start-dev.ps1 -NatappToken 你的隧道token
