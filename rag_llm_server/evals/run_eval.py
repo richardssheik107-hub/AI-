@@ -27,7 +27,7 @@ def group_passed(answer: str, group: list[str]) -> bool:
 def evaluate_answer(case: dict, trace: dict) -> dict:
     answer = trace.get("llm", {}).get("answer", "") or ""
     rag = trace.get("rag", {}) or {}
-    uses_rag = trace.get("path") not in ("faq_direct", "safety_direct")
+    uses_rag = trace.get("path") not in ("faq_direct", "safety_direct", "handoff_direct")
 
     required_results = []
     for group in case.get("required_any_groups", []):
@@ -128,7 +128,11 @@ def count_by(results: list[dict], key: str) -> dict:
 def build_summary(results: list[dict]) -> dict:
     passed_count = sum(1 for result in results if result["passed"])
     cache_hits = sum(1 for result in results if result.get("rag", {}).get("cache_hit"))
-    rag_runs = sum(1 for result in results if result.get("path") not in ("faq_direct", "safety_direct"))
+    rag_runs = sum(
+        1
+        for result in results
+        if result.get("path") not in ("faq_direct", "safety_direct", "handoff_direct")
+    )
 
     return {
         "total": len(results),

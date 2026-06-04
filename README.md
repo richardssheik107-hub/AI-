@@ -260,22 +260,35 @@ cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo\rag_llm_server
 .\.venv\Scripts\python.exe .\evals\run_eval.py --case-id sensitive_sms_code --markdown
 ```
 
+测试转人工/工单模拟：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_eval.py --case-id fee_complaint_ticket --markdown
+```
+
+查看本地模拟工单：
+
+```text
+GET http://localhost:3001/debug/tickets
+```
+
 验证 RAG 缓存效果，并生成 Markdown 报告：
 
 ```powershell
 .\.venv\Scripts\python.exe .\evals\run_eval.py --limit 3 --repeat 2 --markdown
 ```
 
-评测脚本会调用 `/debug/chat/full`，输出每条问题的安全拦截/FAQ/RAG 路径、RAG 候选召回数、重排后命中条数、缓存命中状态、上下文长度、首 token 时间、最终回答和规则检查结果。报告会保存到 `outputs/evals/`，该目录不会提交到 GitHub。
+评测脚本会调用 `/debug/chat/full`，输出每条问题的安全拦截/转人工工单/FAQ/RAG 路径、RAG 候选召回数、重排后命中条数、缓存命中状态、上下文长度、首 token 时间、最终回答和规则检查结果。报告会保存到 `outputs/evals/`，该目录不会提交到 GitHub。
 
 评测结果如果失败，需要按下面顺序判断：
 
 1. `rag.item_count` 为 0：优先优化知识库内容、切片或检索关键词。
 2. RAG 命中正常但回答不合规：优先优化 Prompt 或安全规则。
 3. 敏感信息问题没有走 `safety_direct`：优先补充 `services/compliance_service.py` 中的规则。
-4. `rag.cache_hit` 一直为 `false`：确认是否使用了相同问题、缓存 TTL 是否过短，或后端是否重启导致内存缓存清空。
-5. `rag.candidate_item_count` 有多条但 `items` 排序不准：优先调整知识库切片、关键词，或切换到外部 rerank 模型。
-6. `first_token_ms` 或总耗时过高：调整 `KB_SEARCH_LIMIT`、`KB_MAX_CONTEXT_CHARS`、`ARK_MAX_TOKENS` 和模型低延迟参数。
+4. 投诉、盗刷、征信异议没有走 `handoff_direct`：优先补充 `services/handoff_service.py` 中的规则。
+5. `rag.cache_hit` 一直为 `false`：确认是否使用了相同问题、缓存 TTL 是否过短，或后端是否重启导致内存缓存清空。
+6. `rag.candidate_item_count` 有多条但 `items` 排序不准：优先调整知识库切片、关键词，或切换到外部 rerank 模型。
+7. `first_token_ms` 或总耗时过高：调整 `KB_SEARCH_LIMIT`、`KB_MAX_CONTEXT_CHARS`、`ARK_MAX_TOKENS` 和模型低延迟参数。
 
 ### CustomLLM 回调接口
 

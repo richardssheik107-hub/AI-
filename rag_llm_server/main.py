@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse  # <--- 必须导入这个
 import json
 from services.compliance_service import compliance_service
 from services.faq_service import faq_service
+from services.handoff_service import handoff_service
 from services.rag_service import rag_service  # <--- 新增这行
 
 # 在你的 settings.py 或 main.py 顶部
@@ -61,8 +62,16 @@ def build_safety_stream_chunk(text: str, finish_reason=None):
     return build_direct_stream_chunk(text, model="safety-direct", finish_reason=finish_reason)
 
 
+def build_handoff_stream_chunk(text: str, finish_reason=None):
+    return build_direct_stream_chunk(text, model="handoff-direct", finish_reason=finish_reason)
+
+
 def try_get_safety_answer(question: str):
     return compliance_service.check(question)
+
+
+def try_create_handoff_ticket(question: str):
+    return handoff_service.try_create(question)
 
 
 def try_get_faq_answer(question: str):
@@ -94,6 +103,7 @@ async def health_check():
         "server_url": bool(settings.SERVER_URL),
         "knowledge_base": bool(rag_service.account_id and rag_service.project_name and rag_service.collection_name),
         "compliance": True,
+        "handoff": True,
     }
     return {
         "status": "ok" if all(checks.values()) else "missing_config",
@@ -333,6 +343,15 @@ async def chat_callback(request: Request):
             yield "data: [DONE]\n\n"
             return
 
+        handoff_ticket = try_create_handoff_ticket(question)
+        if handoff_ticket:
+            print(f"[CustomLLM] handoff_ticket={handoff_ticket['ticket_id']}")
+            yield f"data: {json.dumps(build_handoff_stream_chunk(handoff_ticket['answer']), ensure_ascii=False)}\n\n"
+            total_ms = round((time.time() - request_start) * 1000, 2)
+            print(f"[CustomLLM] handoff_done total_ms={total_ms}")
+            yield "data: [DONE]\n\n"
+            return
+
         faq_result = try_get_faq_answer(question)
         if faq_result:
             print(f"[CustomLLM] faq_hit={faq_result['id']}")
@@ -434,6 +453,12 @@ async def debug_chat(request: DebugRequest):
             yield safety_result["answer"]
             return
 
+        handoff_ticket = try_create_handoff_ticket(request.question)
+        if handoff_ticket:
+            print(f"DEBUG: Handoff ticket: {handoff_ticket['ticket_id']}")
+            yield handoff_ticket["answer"]
+            return
+
         faq_result = try_get_faq_answer(request.question)
         if faq_result:
             print(f"DEBUG: FAQ direct hit: {faq_result['id']}")
@@ -529,6 +554,32 @@ async def debug_chat_full(request: DebugRequest):
             },
             "llm": {
                 "answer": safety_result["answer"],
+                "chunk_count": 1,
+                "first_token_ms": 0,
+                "duration_ms": 0,
+                "usage": None,
+            },
+            "total_duration_ms": 0,
+        }
+
+    handoff_ticket = try_create_handoff_ticket(request.question)
+    if handoff_ticket:
+        return {
+            "question": request.question,
+            "history_count": len(request.history or []),
+            "path": "handoff_direct",
+            "handoff": handoff_ticket,
+            "rag": {
+                "status": "skipped",
+                "limit": 0,
+                "item_count": 0,
+                "used_blocks": 0,
+                "context_length": 0,
+                "duration_ms": 0,
+                "items": [],
+            },
+            "llm": {
+                "answer": handoff_ticket["answer"],
                 "chunk_count": 1,
                 "first_token_ms": 0,
                 "duration_ms": 0,
@@ -664,6 +715,18 @@ async def debug_rag(query: str, limit: Optional[int] = None):
         "cache_ttl_seconds": result.get("cache_ttl_seconds"),
         "rerank": result.get("rerank"),
         "duration_ms": round(duration * 1000, 2),
+    }
+
+
+@app.get("/debug/tickets")
+async def debug_tickets(limit: int = 20):
+    """
+    查看本地模拟工单，便于演示投诉、盗刷、征信异议等高风险场景的转人工流程。
+    """
+    items = handoff_service.recent(limit)
+    return {
+        "count": len(items),
+        "items": items,
     }
 
 
