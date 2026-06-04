@@ -23,6 +23,9 @@ class RagService:
         self.timeout = max(1.0, settings.KB_REQUEST_TIMEOUT)
         self.cache_ttl_seconds = max(0, settings.KB_CACHE_TTL_SECONDS)
         self.cache_max_size = max(0, settings.KB_CACHE_MAX_SIZE)
+        self.rerank_enabled = settings.KB_RERANK_ENABLED
+        self.rerank_candidates = max(self.default_limit, min(settings.KB_RERANK_CANDIDATES, 10))
+        self.rerank_top_n = max(1, min(settings.KB_RERANK_TOP_N, self.rerank_candidates))
         self._cache = OrderedDict()
         
         # 知识库服务的固定配置
@@ -33,14 +36,61 @@ class RagService:
     def _normalize_query(self, query: str) -> str:
         return re.sub(r"\s+", "", (query or "").strip().lower())
 
-    def _cache_key(self, query: str, limit: int) -> tuple:
+    def _cache_key(self, query: str, limit: int, candidate_limit: int) -> tuple:
         return (
             self.project_name,
             self.collection_name,
             limit,
+            candidate_limit,
+            self.rerank_enabled,
+            self.rerank_top_n,
             self.max_context_chars,
             self._normalize_query(query),
         )
+
+    def _tokenize_for_rerank(self, text: str) -> set[str]:
+        normalized = self._normalize_query(text)
+        tokens = set(re.findall(r"[a-z0-9]+", normalized))
+        tokens.update(re.findall(r"[\u4e00-\u9fff]{2,}", normalized))
+        for size in (2, 3, 4):
+            if len(normalized) >= size:
+                tokens.update(normalized[index : index + size] for index in range(len(normalized) - size + 1))
+        return tokens
+
+    def _rerank_items(self, query: str, items: list[dict], top_n: int) -> list[dict]:
+        if not self.rerank_enabled or len(items) <= 1:
+            return items[:top_n]
+
+        query_tokens = self._tokenize_for_rerank(query)
+        if not query_tokens:
+            return items[:top_n]
+
+        scored_items = []
+        for item in items:
+            content_tokens = self._tokenize_for_rerank(item.get("content", ""))
+            overlap = len(query_tokens & content_tokens)
+            coverage = overlap / max(1, len(query_tokens))
+            original_score = item.get("score") or 0
+            rerank_score = round(coverage * 100 + float(original_score), 6)
+            reranked_item = copy.deepcopy(item)
+            reranked_item["original_rank"] = item["rank"]
+            reranked_item["rerank_score"] = rerank_score
+            reranked_item["rerank_overlap"] = overlap
+            scored_items.append(reranked_item)
+
+        scored_items.sort(
+            key=lambda item: (
+                item.get("rerank_score", 0),
+                item.get("score") or 0,
+                -item.get("original_rank", item["rank"]),
+            ),
+            reverse=True,
+        )
+
+        for index, item in enumerate(scored_items, start=1):
+            item["rank"] = index
+
+        return scored_items[:top_n]
 
     def _get_cached_result(self, cache_key: tuple) -> dict | None:
         if self.cache_ttl_seconds <= 0 or self.cache_max_size <= 0:
@@ -103,8 +153,12 @@ class RagService:
             }
 
         path = "/api/knowledge/collection/search_knowledge"
-        search_limit = max(1, min(int(limit or self.default_limit), 10))
-        cache_key = self._cache_key(query, search_limit)
+        final_limit = max(1, min(int(limit or self.default_limit), 10))
+        candidate_limit = final_limit
+        if self.rerank_enabled:
+            candidate_limit = max(final_limit, self.rerank_candidates)
+
+        cache_key = self._cache_key(query, final_limit, candidate_limit)
         cached_result = self._get_cached_result(cache_key)
         if cached_result:
             print(f"[RagService] Cache hit: {cache_key[-1]}")
@@ -115,7 +169,7 @@ class RagService:
             "project": self.project_name,
             "name": self.collection_name,
             "query": query,
-            "limit": search_limit,
+            "limit": candidate_limit,
             "pre_processing": {
                 "need_instruction": True,
                 "return_token_usage": True,
@@ -173,7 +227,8 @@ class RagService:
                     "http_status": resp.status_code,
                     "context": "",
                     "items": [],
-                    "limit": search_limit,
+                    "limit": final_limit,
+                    "candidate_limit": candidate_limit,
                     "context_length": 0,
                 }
 
@@ -202,16 +257,19 @@ class RagService:
                     "status": "no_results",
                     "context": "",
                     "items": [],
-                    "limit": search_limit,
+                    "limit": final_limit,
+                    "candidate_limit": candidate_limit,
                     "context_length": 0,
                     "cache_hit": False,
                 }
                 self._set_cached_result(cache_key, result)
                 return result
 
+            reranked_items = self._rerank_items(query, items, final_limit)
+
             blocks = []
             current_length = 0
-            for item in items:
+            for item in reranked_items:
                 block = f"[知识片段 {item['rank']}]\n{item['content']}"
                 if blocks and current_length + len(block) > self.max_context_chars:
                     break
@@ -220,18 +278,29 @@ class RagService:
 
             context_text = "\n\n".join(blocks)
             
-            print(f"[RagService] Retrieved {len(items)} item(s), using {len(blocks)} block(s)")
+            print(
+                f"[RagService] Retrieved {len(items)} candidate(s), "
+                f"using {len(blocks)} block(s), rerank={self.rerank_enabled}"
+            )
             print(f"[RagService] Context length: {len(context_text)} chars")
             result = {
                 "status": "success",
                 "context": context_text,
-                "items": items,
-                "limit": search_limit,
+                "items": reranked_items,
+                "candidate_items": items,
+                "limit": final_limit,
+                "candidate_limit": candidate_limit,
                 "used_blocks": len(blocks),
                 "context_length": len(context_text),
                 "max_context_chars": self.max_context_chars,
                 "cache_hit": False,
                 "cache_ttl_seconds": self.cache_ttl_seconds,
+                "rerank": {
+                    "enabled": self.rerank_enabled,
+                    "method": "local_keyword_overlap",
+                    "candidate_count": len(items),
+                    "top_n": len(reranked_items),
+                },
             }
             self._set_cached_result(cache_key, result)
             return result

@@ -107,6 +107,9 @@ async def health_check():
             "request_timeout": settings.KB_REQUEST_TIMEOUT,
             "cache_ttl_seconds": settings.KB_CACHE_TTL_SECONDS,
             "cache_max_size": settings.KB_CACHE_MAX_SIZE,
+            "rerank_enabled": settings.KB_RERANK_ENABLED,
+            "rerank_candidates": settings.KB_RERANK_CANDIDATES,
+            "rerank_top_n": settings.KB_RERANK_TOP_N,
         },
     }
 
@@ -543,12 +546,15 @@ async def debug_chat_full(request: DebugRequest):
             "rag": {
                 "status": rag_result.get("status"),
                 "limit": rag_result.get("limit"),
+                "candidate_limit": rag_result.get("candidate_limit"),
                 "item_count": len(rag_result.get("items", [])),
+                "candidate_item_count": len(rag_result.get("candidate_items", [])),
                 "used_blocks": rag_result.get("used_blocks", 0),
                 "context_length": rag_result.get("context_length", 0),
                 "duration_ms": rag_duration_ms,
                 "cache_hit": rag_result.get("cache_hit", False),
                 "cache_ttl_seconds": rag_result.get("cache_ttl_seconds"),
+                "rerank": rag_result.get("rerank"),
                 "items": rag_result.get("items", []),
             },
             "llm": {
@@ -589,12 +595,15 @@ async def debug_rag(query: str, limit: Optional[int] = None):
         "status": result.get("status"),
         "retrieved_context": result.get("context", ""),
         "items": result.get("items", []),
+        "candidate_items": result.get("candidate_items", []),
         "limit": result.get("limit"),
+        "candidate_limit": result.get("candidate_limit"),
         "used_blocks": result.get("used_blocks", 0),
         "length": result.get("context_length", 0),
         "max_context_chars": result.get("max_context_chars"),
         "cache_hit": result.get("cache_hit", False),
         "cache_ttl_seconds": result.get("cache_ttl_seconds"),
+        "rerank": result.get("rerank"),
         "duration_ms": round(duration * 1000, 2),
     }
 

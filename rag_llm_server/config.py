@@ -38,5 +38,8 @@ class Config:
     KB_REQUEST_TIMEOUT = float(os.getenv("KB_REQUEST_TIMEOUT", "10"))
     KB_CACHE_TTL_SECONDS = int(os.getenv("KB_CACHE_TTL_SECONDS", "300"))
     KB_CACHE_MAX_SIZE = int(os.getenv("KB_CACHE_MAX_SIZE", "128"))
+    KB_RERANK_ENABLED = os.getenv("KB_RERANK_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    KB_RERANK_CANDIDATES = int(os.getenv("KB_RERANK_CANDIDATES", "3"))
+    KB_RERANK_TOP_N = int(os.getenv("KB_RERANK_TOP_N", str(KB_SEARCH_LIMIT)))
 
 settings = Config()

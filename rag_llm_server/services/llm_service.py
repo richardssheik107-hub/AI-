@@ -11,6 +11,7 @@ class LLMService:
             sk=settings.VOLC_SK,
             timeout=1800,
         )
+        self._service_tier_disabled = False
 
     def chat_stream(self, history_messages: list, rag_context: str = ""):
         """
@@ -64,7 +65,7 @@ class LLMService:
                 "stream": True,
                 "stream_options": {"include_usage": True},
             }
-            if settings.ARK_SERVICE_TIER:
+            if settings.ARK_SERVICE_TIER and not self._service_tier_disabled:
                 request_kwargs["service_tier"] = settings.ARK_SERVICE_TIER
             if settings.ARK_REASONING_EFFORT:
                 request_kwargs["reasoning_effort"] = settings.ARK_REASONING_EFFORT
@@ -76,6 +77,7 @@ class LLMService:
                     raise
 
                 print(f"LLM optimized request failed, retrying without service_tier: {optimized_error}")
+                self._service_tier_disabled = True
                 request_kwargs.pop("service_tier", None)
                 try:
                     stream = self.client.chat.completions.create(**request_kwargs)

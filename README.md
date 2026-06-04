@@ -254,13 +254,21 @@ cd C:\Users\Fergeson\Desktop\AI智能语音客服\ark_aigc_demo\rag_llm_server
 .\.venv\Scripts\python.exe .\evals\run_eval.py --case-id cc_credit_late_one_day
 ```
 
-评测脚本会调用 `/debug/chat/full`，输出每条问题的 RAG 命中条数、上下文长度、首 token 时间、最终回答和规则检查结果。报告会保存到 `outputs/evals/`，该目录不会提交到 GitHub。
+验证 RAG 缓存效果，并生成 Markdown 报告：
+
+```powershell
+.\.venv\Scripts\python.exe .\evals\run_eval.py --limit 3 --repeat 2 --markdown
+```
+
+评测脚本会调用 `/debug/chat/full`，输出每条问题的 FAQ/RAG 路径、RAG 候选召回数、重排后命中条数、缓存命中状态、上下文长度、首 token 时间、最终回答和规则检查结果。报告会保存到 `outputs/evals/`，该目录不会提交到 GitHub。
 
 评测结果如果失败，需要按下面顺序判断：
 
 1. `rag.item_count` 为 0：优先优化知识库内容、切片或检索关键词。
 2. RAG 命中正常但回答不合规：优先优化 Prompt 或安全规则。
-3. `first_token_ms` 或总耗时过高：调整 `KB_SEARCH_LIMIT` 和 `KB_MAX_CONTEXT_CHARS`。
+3. `rag.cache_hit` 一直为 `false`：确认是否使用了相同问题、缓存 TTL 是否过短，或后端是否重启导致内存缓存清空。
+4. `rag.candidate_item_count` 有多条但 `items` 排序不准：优先调整知识库切片、关键词，或切换到外部 rerank 模型。
+5. `first_token_ms` 或总耗时过高：调整 `KB_SEARCH_LIMIT`、`KB_MAX_CONTEXT_CHARS`、`ARK_MAX_TOKENS` 和模型低延迟参数。
 
 ### CustomLLM 回调接口
 
