@@ -1,7 +1,11 @@
+import copy
 import httpx
+import re
+import time
+from collections import OrderedDict
+
 from config import settings
 from services.utils import Signer
-
 
 
 class RagService:
@@ -17,11 +21,58 @@ class RagService:
         self.default_limit = max(1, settings.KB_SEARCH_LIMIT)
         self.max_context_chars = max(500, settings.KB_MAX_CONTEXT_CHARS)
         self.timeout = max(1.0, settings.KB_REQUEST_TIMEOUT)
+        self.cache_ttl_seconds = max(0, settings.KB_CACHE_TTL_SECONDS)
+        self.cache_max_size = max(0, settings.KB_CACHE_MAX_SIZE)
+        self._cache = OrderedDict()
         
         # 知识库服务的固定配置
         self.host = "api-knowledgebase.mlp.cn-beijing.volces.com"
         self.region = "cn-north-1" # 示例代码中使用的是 cn-north-1
         self.service = "air"       # 知识库服务的 Service 名通常为 air
+
+    def _normalize_query(self, query: str) -> str:
+        return re.sub(r"\s+", "", (query or "").strip().lower())
+
+    def _cache_key(self, query: str, limit: int) -> tuple:
+        return (
+            self.project_name,
+            self.collection_name,
+            limit,
+            self.max_context_chars,
+            self._normalize_query(query),
+        )
+
+    def _get_cached_result(self, cache_key: tuple) -> dict | None:
+        if self.cache_ttl_seconds <= 0 or self.cache_max_size <= 0:
+            return None
+
+        cached = self._cache.get(cache_key)
+        if not cached:
+            return None
+
+        cached_at, result = cached
+        if time.time() - cached_at > self.cache_ttl_seconds:
+            self._cache.pop(cache_key, None)
+            return None
+
+        self._cache.move_to_end(cache_key)
+        result_copy = copy.deepcopy(result)
+        result_copy["cache_hit"] = True
+        result_copy["cache_ttl_seconds"] = self.cache_ttl_seconds
+        return result_copy
+
+    def _set_cached_result(self, cache_key: tuple, result: dict) -> None:
+        if self.cache_ttl_seconds <= 0 or self.cache_max_size <= 0:
+            return
+
+        cached_result = copy.deepcopy(result)
+        cached_result["cache_hit"] = False
+        cached_result["cache_ttl_seconds"] = self.cache_ttl_seconds
+        self._cache[cache_key] = (time.time(), cached_result)
+        self._cache.move_to_end(cache_key)
+
+        while len(self._cache) > self.cache_max_size:
+            self._cache.popitem(last=False)
 
     async def search(self, query: str, limit: int | None = None) -> dict:
         """
@@ -53,6 +104,11 @@ class RagService:
 
         path = "/api/knowledge/collection/search_knowledge"
         search_limit = max(1, min(int(limit or self.default_limit), 10))
+        cache_key = self._cache_key(query, search_limit)
+        cached_result = self._get_cached_result(cache_key)
+        if cached_result:
+            print(f"[RagService] Cache hit: {cache_key[-1]}")
+            return cached_result
         
         # 3. 构造请求体 (参考官方示例)
         body = {
@@ -142,13 +198,16 @@ class RagService:
 
             if not items:
                 print("[RagService] No matched knowledge content")
-                return {
+                result = {
                     "status": "no_results",
                     "context": "",
                     "items": [],
                     "limit": search_limit,
                     "context_length": 0,
+                    "cache_hit": False,
                 }
+                self._set_cached_result(cache_key, result)
+                return result
 
             blocks = []
             current_length = 0
@@ -163,7 +222,7 @@ class RagService:
             
             print(f"[RagService] Retrieved {len(items)} item(s), using {len(blocks)} block(s)")
             print(f"[RagService] Context length: {len(context_text)} chars")
-            return {
+            result = {
                 "status": "success",
                 "context": context_text,
                 "items": items,
@@ -171,7 +230,11 @@ class RagService:
                 "used_blocks": len(blocks),
                 "context_length": len(context_text),
                 "max_context_chars": self.max_context_chars,
+                "cache_hit": False,
+                "cache_ttl_seconds": self.cache_ttl_seconds,
             }
+            self._set_cached_result(cache_key, result)
+            return result
 
 
         except Exception as e:

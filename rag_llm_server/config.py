@@ -36,5 +36,7 @@ class Config:
     KB_SEARCH_LIMIT = int(os.getenv("KB_SEARCH_LIMIT", "1"))
     KB_MAX_CONTEXT_CHARS = int(os.getenv("KB_MAX_CONTEXT_CHARS", "3000"))
     KB_REQUEST_TIMEOUT = float(os.getenv("KB_REQUEST_TIMEOUT", "10"))
+    KB_CACHE_TTL_SECONDS = int(os.getenv("KB_CACHE_TTL_SECONDS", "300"))
+    KB_CACHE_MAX_SIZE = int(os.getenv("KB_CACHE_MAX_SIZE", "128"))
 
 settings = Config()

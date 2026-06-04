@@ -105,6 +105,8 @@ async def health_check():
             "search_limit": settings.KB_SEARCH_LIMIT,
             "max_context_chars": settings.KB_MAX_CONTEXT_CHARS,
             "request_timeout": settings.KB_REQUEST_TIMEOUT,
+            "cache_ttl_seconds": settings.KB_CACHE_TTL_SECONDS,
+            "cache_max_size": settings.KB_CACHE_MAX_SIZE,
         },
     }
 
@@ -545,6 +547,8 @@ async def debug_chat_full(request: DebugRequest):
                 "used_blocks": rag_result.get("used_blocks", 0),
                 "context_length": rag_result.get("context_length", 0),
                 "duration_ms": rag_duration_ms,
+                "cache_hit": rag_result.get("cache_hit", False),
+                "cache_ttl_seconds": rag_result.get("cache_ttl_seconds"),
                 "items": rag_result.get("items", []),
             },
             "llm": {
@@ -589,6 +593,8 @@ async def debug_rag(query: str, limit: Optional[int] = None):
         "used_blocks": result.get("used_blocks", 0),
         "length": result.get("context_length", 0),
         "max_context_chars": result.get("max_context_chars"),
+        "cache_hit": result.get("cache_hit", False),
+        "cache_ttl_seconds": result.get("cache_ttl_seconds"),
         "duration_ms": round(duration * 1000, 2),
     }
 
