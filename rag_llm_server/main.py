@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi import Request
 from fastapi.responses import StreamingResponse  # <--- 必须导入这个
 import json
+from services.faq_service import faq_service
 from services.rag_service import rag_service  # <--- 新增这行
 
 # 在你的 settings.py 或 main.py 顶部
@@ -33,6 +34,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def build_faq_stream_chunk(text: str, finish_reason=None):
+    return {
+        "id": f"faq-{uuid.uuid4().hex}",
+        "object": "chat.completion.chunk",
+        "created": int(time.time()),
+        "model": "faq-direct",
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"role": "assistant", "content": text},
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+
+
+def try_get_faq_answer(question: str):
+    rule = faq_service.match(question)
+    if not rule:
+        return None
+
+    return {
+        "id": rule["id"],
+        "answer": rule["answer"],
+        "source": "faq_direct",
+    }
 
 
 @app.get("/health")
@@ -57,6 +86,13 @@ async def health_check():
         "checks": checks,
         "server_url": settings.SERVER_URL,
         "callback_url": f"{settings.SERVER_URL}/api/chat_callback" if settings.SERVER_URL else None,
+        "ark": {
+            "endpoint_id": settings.ARK_ENDPOINT_ID,
+            "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+            "max_tokens": settings.ARK_MAX_TOKENS,
+            "service_tier": settings.ARK_SERVICE_TIER,
+            "reasoning_effort": settings.ARK_REASONING_EFFORT,
+        },
         "room": {
             "room_id": settings.RTC_ROOM_ID,
             "user_id": settings.RTC_USER_ID,
@@ -269,6 +305,17 @@ async def chat_callback(request: Request):
         question = messages[-1].get("content", "")
         print(f"[CustomLLM] question={question}")
 
+        faq_result = try_get_faq_answer(question)
+        if faq_result:
+            print(f"[CustomLLM] faq_hit={faq_result['id']}")
+            first_token_ms = round((time.time() - request_start) * 1000, 2)
+            print(f"[CustomLLM] first_token_ms={first_token_ms}")
+            yield f"data: {json.dumps(build_faq_stream_chunk(faq_result['answer']), ensure_ascii=False)}\n\n"
+            total_ms = round((time.time() - request_start) * 1000, 2)
+            print(f"[CustomLLM] sse_done chunks=1 total_ms={total_ms}")
+            yield "data: [DONE]\n\n"
+            return
+
         rag_start = time.time()
         rag_result = await rag_service.search(question)
         rag_duration_ms = round((time.time() - rag_start) * 1000, 2)
@@ -353,6 +400,11 @@ async def debug_chat(request: DebugRequest):
     async def generate_text():
         full_ai_response = ""
         total_usage = None
+        faq_result = try_get_faq_answer(request.question)
+        if faq_result:
+            print(f"DEBUG: FAQ direct hit: {faq_result['id']}")
+            yield faq_result["answer"]
+            return
 
             # 1. 记录总开始时间
         start_t = time.time()
@@ -420,6 +472,35 @@ async def debug_chat_full(request: DebugRequest):
         "question": request.question,
         "history_count": len(request.history or []),
     }
+
+    faq_result = try_get_faq_answer(request.question)
+    if faq_result:
+        return {
+            "question": request.question,
+            "history_count": len(request.history or []),
+            "path": "faq_direct",
+            "faq": {
+                "id": faq_result["id"],
+                "answer": faq_result["answer"],
+            },
+            "rag": {
+                "status": "skipped",
+                "limit": 0,
+                "item_count": 0,
+                "used_blocks": 0,
+                "context_length": 0,
+                "duration_ms": 0,
+                "items": [],
+            },
+            "llm": {
+                "answer": faq_result["answer"],
+                "chunk_count": 1,
+                "first_token_ms": 0,
+                "duration_ms": 0,
+                "usage": None,
+            },
+            "total_duration_ms": 0,
+        }
 
     total_start = time.time()
     rag_start = time.time()

@@ -8,6 +8,9 @@ class Config:
     VOLC_SK = os.getenv("VOLC_SECRET_KEY")
     ARK_ENDPOINT_ID = os.getenv("ARK_ENDPOINT_ID")
     ARK_API_KEY = os.getenv("ARK_API_KEY")
+    ARK_MAX_TOKENS = int(os.getenv("ARK_MAX_TOKENS", "120"))
+    ARK_SERVICE_TIER = os.getenv("ARK_SERVICE_TIER", "fast")
+    ARK_REASONING_EFFORT = os.getenv("ARK_REASONING_EFFORT", "minimal")
 
     RTC_APP_ID = os.getenv("RTC_APP_ID")
     RTC_APP_KEY = os.getenv("RTC_APP_KEY")
