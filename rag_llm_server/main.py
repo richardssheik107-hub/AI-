@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse
 from fastapi import Request
 from fastapi.responses import StreamingResponse  # <--- 必须导入这个
 import json
+from services.compliance_service import compliance_service
 from services.faq_service import faq_service
 from services.rag_service import rag_service  # <--- 新增这行
 
@@ -36,12 +37,12 @@ app.add_middleware(
 )
 
 
-def build_faq_stream_chunk(text: str, finish_reason=None):
+def build_direct_stream_chunk(text: str, model: str = "direct-reply", finish_reason=None):
     return {
-        "id": f"faq-{uuid.uuid4().hex}",
+        "id": f"{model}-{uuid.uuid4().hex}",
         "object": "chat.completion.chunk",
         "created": int(time.time()),
-        "model": "faq-direct",
+        "model": model,
         "choices": [
             {
                 "index": 0,
@@ -50,6 +51,18 @@ def build_faq_stream_chunk(text: str, finish_reason=None):
             }
         ],
     }
+
+
+def build_faq_stream_chunk(text: str, finish_reason=None):
+    return build_direct_stream_chunk(text, model="faq-direct", finish_reason=finish_reason)
+
+
+def build_safety_stream_chunk(text: str, finish_reason=None):
+    return build_direct_stream_chunk(text, model="safety-direct", finish_reason=finish_reason)
+
+
+def try_get_safety_answer(question: str):
+    return compliance_service.check(question)
 
 
 def try_get_faq_answer(question: str):
@@ -80,6 +93,7 @@ async def health_check():
         "tts": bool(settings.TTS_APP_ID and settings.TTS_CLUSTER and settings.TTS_VOICE_TYPE),
         "server_url": bool(settings.SERVER_URL),
         "knowledge_base": bool(rag_service.account_id and rag_service.project_name and rag_service.collection_name),
+        "compliance": True,
     }
     return {
         "status": "ok" if all(checks.values()) else "missing_config",
@@ -310,6 +324,15 @@ async def chat_callback(request: Request):
         question = messages[-1].get("content", "")
         print(f"[CustomLLM] question={question}")
 
+        safety_result = try_get_safety_answer(question)
+        if safety_result:
+            print(f"[CustomLLM] safety_hit={safety_result['id']}")
+            yield f"data: {json.dumps(build_safety_stream_chunk(safety_result['answer']), ensure_ascii=False)}\n\n"
+            total_ms = round((time.time() - request_start) * 1000, 2)
+            print(f"[CustomLLM] safety_done total_ms={total_ms}")
+            yield "data: [DONE]\n\n"
+            return
+
         faq_result = try_get_faq_answer(question)
         if faq_result:
             print(f"[CustomLLM] faq_hit={faq_result['id']}")
@@ -405,6 +428,12 @@ async def debug_chat(request: DebugRequest):
     async def generate_text():
         full_ai_response = ""
         total_usage = None
+        safety_result = try_get_safety_answer(request.question)
+        if safety_result:
+            print(f"DEBUG: Safety direct hit: {safety_result['id']}")
+            yield safety_result["answer"]
+            return
+
         faq_result = try_get_faq_answer(request.question)
         if faq_result:
             print(f"DEBUG: FAQ direct hit: {faq_result['id']}")
@@ -477,6 +506,36 @@ async def debug_chat_full(request: DebugRequest):
         "question": request.question,
         "history_count": len(request.history or []),
     }
+
+    safety_result = try_get_safety_answer(request.question)
+    if safety_result:
+        return {
+            "question": request.question,
+            "history_count": len(request.history or []),
+            "path": "safety_direct",
+            "safety": {
+                "id": safety_result["id"],
+                "risk_type": safety_result["risk_type"],
+                "answer": safety_result["answer"],
+            },
+            "rag": {
+                "status": "skipped",
+                "limit": 0,
+                "item_count": 0,
+                "used_blocks": 0,
+                "context_length": 0,
+                "duration_ms": 0,
+                "items": [],
+            },
+            "llm": {
+                "answer": safety_result["answer"],
+                "chunk_count": 1,
+                "first_token_ms": 0,
+                "duration_ms": 0,
+                "usage": None,
+            },
+            "total_duration_ms": 0,
+        }
 
     faq_result = try_get_faq_answer(request.question)
     if faq_result:
